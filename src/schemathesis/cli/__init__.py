@@ -116,6 +116,7 @@ def schemathesis(pre_run: Optional[str] = None) -> None:
 )
 @click.option("--validate-schema", help="Enable or disable validation of input schema.", type=bool, default=True)
 @click.option("--show-errors-tracebacks", help="Show full tracebacks for internal errors.", is_flag=True, default=False)
+@click.option("--store-network-log", help="Store requests and responses into a file", type=click.File("w"))
 @click.option(
     "--hypothesis-deadline",
     help="Duration in milliseconds that each individual example with a test is not allowed to exceed.",
@@ -160,6 +161,7 @@ def run(  # pylint: disable=too-many-arguments
     request_timeout: Optional[int] = None,
     validate_schema: bool = True,
     show_errors_tracebacks: bool = False,
+    store_network_log: Optional[str] = None,  # It is a file, fix the type
     hypothesis_deadline: Optional[Union[int, NotSet]] = None,
     hypothesis_derandomize: Optional[bool] = None,
     hypothesis_max_examples: Optional[int] = None,
@@ -193,6 +195,7 @@ def run(  # pylint: disable=too-many-arguments
         app=app,
         seed=hypothesis_seed,
         exit_first=exit_first,
+        store_interactions=store_network_log is not None,
         checks=selected_checks,
         workers_num=workers_num,
         validate_schema=validate_schema,

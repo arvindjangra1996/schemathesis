@@ -1,4 +1,5 @@
 # pylint: disable=too-many-instance-attributes
+import base64
 from collections import Counter
 from contextlib import contextmanager
 from enum import IntEnum
@@ -126,14 +127,16 @@ class Case:
             session.close()
         return response
 
-    def as_werkzeug_kwargs(self) -> Dict[str, Any]:
+    def as_werkzeug_kwargs(self, headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Convert the case into a dictionary acceptable by werkzeug.Client."""
-        headers = self.headers
+        final_headers = self.headers.copy() if self.headers is not None else {}
+        if headers:
+            final_headers.update(headers)
         extra: Dict[str, Optional[Union[Dict, bytes]]]
         if self.form_data:
             extra = {"data": self.form_data}
-            headers = headers or {}
-            headers.setdefault("Content-Type", "multipart/form-data")
+            final_headers = final_headers or {}
+            final_headers.setdefault("Content-Type", "multipart/form-data")
         elif is_multipart(self.body):
             extra = {"data": self.body}
         else:
@@ -141,7 +144,7 @@ class Case:
         return {
             "method": self.method,
             "path": self.formatted_path,
-            "headers": headers,
+            "headers": final_headers,
             "query_string": self.query,
             **extra,
         }
@@ -153,10 +156,7 @@ class Case:
                 "WSGI application instance is required. "
                 "Please, set `app` argument in the schema constructor or pass it to `call_wsgi`"
             )
-        data = self.as_werkzeug_kwargs()
-        if headers:
-            data["headers"] = data["headers"] or {}
-            data["headers"].update(headers)
+        data = self.as_werkzeug_kwargs(headers)
         client = werkzeug.Client(application, WSGIResponse)
         with cookie_handler(client, self.cookies):
             return client.open(**data, **kwargs)
@@ -260,12 +260,99 @@ class Check:
 
 
 @attr.s(slots=True, repr=False)  # pragma: no mutate
+class Request:
+    """Request data extracted from `Case`."""
+
+    path: str = attr.ib()  # pragma: no mutate
+    method: str = attr.ib()  # pragma: no mutate
+    base_url: Optional[str] = attr.ib()  # pragma: no mutate
+    headers: Optional[Headers] = attr.ib()  # pragma: no mutate
+    cookies: Optional[Cookies] = attr.ib()  # pragma: no mutate
+    query: Optional[Query] = attr.ib()  # pragma: no mutate
+    body: Optional[Body] = attr.ib()  # pragma: no mutate
+    form_data: Optional[FormData] = attr.ib()  # pragma: no mutate
+
+    @classmethod
+    def from_case(cls, case: Case) -> "Request":
+        """Create a new `Request` instance from `Case`."""
+        return cls(
+            path=case.path,
+            method=case.method,
+            base_url=case.base_url,
+            headers=case.headers,
+            cookies=case.cookies,
+            query=case.query,
+            body=case.body,
+            form_data=case.form_data,
+        )
+
+
+def to_base64(payload: Optional[bytes]) -> Optional[str]:
+    if payload is None:
+        return None
+    return base64.b64encode(payload).decode()
+
+
+@attr.s(slots=True, repr=False)  # pragma: no mutate
+class Response:
+    """Unified response data."""
+
+    url: str = attr.ib()  # pragma: no mutate
+    status_code: int = attr.ib()  # pragma: no mutate
+    # base64-encoded response body
+    content: Optional[str] = attr.ib(converter=to_base64)  # pragma: no mutate
+    headers: Dict[str, str] = attr.ib()  # pragma: no mutate
+    elapsed: float = attr.ib()  # pragma: no mutate
+
+    @classmethod
+    def from_requests(cls, response: requests.Response) -> "Response":
+        """Create a response from requests.Response."""
+        return cls(
+            url=response.url,
+            status_code=response.status_code,
+            content=response.content,
+            headers=dict(response.headers),
+            elapsed=response.elapsed.total_seconds(),
+        )
+
+    @classmethod
+    def from_wsgi(cls, response: WSGIResponse, url: str, elapsed: float) -> "Response":
+        """Create a response from WSGI response."""
+        return cls(
+            url=url,
+            status_code=response.status_code,
+            content=response.data,
+            headers=dict(response.headers),
+            elapsed=elapsed,
+        )
+
+
+@attr.s(slots=True)  # pragma: no mutate
+class Interaction:
+    """A single interaction with the target app."""
+
+    request: Request = attr.ib()  # pragma: no mutate
+    response: Response = attr.ib()  # pragma: no mutate
+
+    @classmethod
+    def from_requests(cls, case: Case, response: requests.Response) -> "Interaction":
+        return cls(request=Request.from_case(case), response=Response.from_requests(response))
+
+    @classmethod
+    def from_wsgi(  # pylint: disable=too-many-arguments
+        cls, case: Case, response: WSGIResponse, url: str, elapsed: float
+    ) -> "Interaction":
+        return cls(request=Request.from_case(case), response=Response.from_wsgi(response, url, elapsed))
+
+
+@attr.s(slots=True, repr=False)  # pragma: no mutate
 class TestResult:
     """Result of a single test."""
 
     endpoint: Endpoint = attr.ib()  # pragma: no mutate
     checks: List[Check] = attr.ib(factory=list)  # pragma: no mutate
     errors: List[Tuple[Exception, Optional[Case]]] = attr.ib(factory=list)  # pragma: no mutate
+    interactions: List[Interaction] = attr.ib(factory=list)  # pragma: no mutate
     logs: List[LogRecord] = attr.ib(factory=list)  # pragma: no mutate
     is_errored: bool = attr.ib(default=False)  # pragma: no mutate
     seed: Optional[int] = attr.ib(default=None)  # pragma: no mutate
@@ -293,6 +380,12 @@ class TestResult:
 
     def add_error(self, exception: Exception, example: Optional[Case] = None) -> None:
         self.errors.append((exception, example))
+
+    def store_requests_response(self, case: Case, response: requests.Response) -> None:
+        self.interactions.append(Interaction.from_requests(case, response))
+
+    def store_wsgi_response(self, case: Case, response: WSGIResponse, elapsed: float) -> None:
+        self.interactions.append(Interaction.from_wsgi(case, response, case.formatted_path, elapsed))
 
 
 @attr.s(slots=True, repr=False)  # pragma: no mutate
