@@ -11,10 +11,10 @@ from ..types import Filter, NotSet, RawAuth
 from ..utils import dict_not_none_values, dict_true_values, file_exists, get_base_url, get_requests_auth, import_app
 from . import events
 from .impl import BaseRunner, SingleThreadRunner, SingleThreadWSGIRunner, ThreadPoolRunner, ThreadPoolWSGIRunner
-
+from collections import OrderedDict
 
 def prepare(  # pylint: disable=too-many-arguments
-    schema_uri: Union[str, Dict[str, Any]],
+    schema_uri: Union[str, Dict[str, Any], OrderedDict],
     *,
     # Runtime behavior
     checks: Iterable[CheckFunction] = DEFAULT_CHECKS,
@@ -33,6 +33,7 @@ def prepare(  # pylint: disable=too-many-arguments
     tag: Optional[Filter] = None,
     app: Optional[str] = None,
     validate_schema: bool = True,
+    execute_in_order: Optional[dict] = None,
     # Hypothesis-specific configuration
     hypothesis_deadline: Optional[Union[int, NotSet]] = None,
     hypothesis_derandomize: Optional[bool] = None,
@@ -44,9 +45,8 @@ def prepare(  # pylint: disable=too-many-arguments
 ) -> Generator[events.ExecutionEvent, None, None]:
     """Prepare a generator that will run test cases against the given API definition."""
     # pylint: disable=too-many-locals
-
     validate_loader(loader, schema_uri)
-
+    
     if auth is None:
         # Auth type doesn't matter if auth is not passed
         auth_type = None  # type: ignore
@@ -77,6 +77,7 @@ def prepare(  # pylint: disable=too-many-arguments
         auth_type=auth_type,
         headers=headers,
         request_timeout=request_timeout,
+        execute_in_order=execute_in_order,
     )
 
 
@@ -101,7 +102,7 @@ def validate_loader(loader: Callable, schema_uri: Union[str, Dict[str, Any]]) ->
 
 def execute_from_schema(
     *,
-    schema_uri: Union[str, Dict[str, Any]],
+    schema_uri: Union[str, Dict[str, Any],OrderedDict],
     loader: Callable = loaders.from_uri,
     base_url: Optional[str] = None,
     endpoint: Optional[Filter] = None,
@@ -116,6 +117,7 @@ def execute_from_schema(
     auth_type: Optional[str] = None,
     headers: Optional[Dict[str, Any]] = None,
     request_timeout: Optional[int] = None,
+    execute_in_order: Optional[dict] = None,
     seed: Optional[int] = None,
     exit_first: bool = False,
 ) -> Generator[events.ExecutionEvent, None, None]:
@@ -139,8 +141,8 @@ def execute_from_schema(
             endpoint=endpoint,
             method=method,
             tag=tag,
+            execute_in_order=execute_in_order,
         )
-
         runner: BaseRunner
         if workers_num > 1:
             if schema.app:
@@ -178,8 +180,9 @@ def execute_from_schema(
                     headers=headers,
                     seed=seed,
                     exit_first=exit_first,
+                    execute_in_order=execute_in_order,
                 )
-            else:
+            else:  
                 runner = SingleThreadRunner(
                     schema=schema,
                     checks=checks,
@@ -190,14 +193,15 @@ def execute_from_schema(
                     seed=seed,
                     request_timeout=request_timeout,
                     exit_first=exit_first,
-                )
+                    execute_in_order=execute_in_order,
+                )               
         yield from runner.execute()
     except Exception as exc:
         yield events.InternalError.from_exc(exc)
 
 
 def load_schema(
-    schema_uri: Union[str, Dict[str, Any]],
+    schema_uri: Union[str, Dict[str, Any],OrderedDict],
     *,
     base_url: Optional[str] = None,
     loader: Callable = loaders.from_uri,
@@ -211,9 +215,10 @@ def load_schema(
     endpoint: Optional[Filter] = None,
     method: Optional[Filter] = None,
     tag: Optional[Filter] = None,
+    execute_in_order: Optional[dict] = None,
 ) -> BaseSchema:
     """Load schema via specified loader and parameters."""
-    loader_options = dict_true_values(base_url=base_url, endpoint=endpoint, method=method, tag=tag, app=app)
+    loader_options = dict_true_values(base_url=base_url, endpoint=endpoint, method=method, tag=tag, app=app, execute_in_order=execute_in_order)
 
     if not isinstance(schema_uri, dict):
         if file_exists(schema_uri):
@@ -229,7 +234,6 @@ def load_schema(
         loader_options["base_url"] = get_base_url(schema_uri)
     if loader is loaders.from_uri and loader_options.get("auth"):
         loader_options["auth"] = get_requests_auth(loader_options["auth"], loader_options.pop("auth_type", None))
-
     return loader(schema_uri, validate_schema=validate_schema, **loader_options)
 
 

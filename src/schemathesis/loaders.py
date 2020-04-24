@@ -16,6 +16,7 @@ from .lazy import LazySchema
 from .schemas import BaseSchema, OpenApi30, SwaggerV20
 from .types import Filter, PathLike
 from .utils import NOT_SET, StringDatesYAMLLoader, WSGIResponse, get_base_url
+from collections import OrderedDict
 
 
 def from_path(
@@ -48,6 +49,7 @@ def from_uri(
     method: Optional[Filter] = None,
     endpoint: Optional[Filter] = None,
     tag: Optional[Filter] = None,
+    execute_in_order: Optional[dict] = None,
     *,
     app: Any = None,
     validate_schema: bool = True,
@@ -71,6 +73,7 @@ def from_uri(
         tag=tag,
         app=app,
         validate_schema=validate_schema,
+        execute_in_order=execute_in_order,
     )
 
 
@@ -81,6 +84,7 @@ def from_file(
     method: Optional[Filter] = None,
     endpoint: Optional[Filter] = None,
     tag: Optional[Filter] = None,
+    execute_in_order: Optional[dict] = None,
     *,
     app: Any = None,
     validate_schema: bool = True,
@@ -90,7 +94,7 @@ def from_file(
 
     `file` could be a file descriptor, string or bytes.
     """
-    raw = yaml.load(file, StringDatesYAMLLoader)
+    raw = yaml.load(file, StringDatesYAMLLoader)  
     return from_dict(
         raw,
         location=location,
@@ -100,11 +104,12 @@ def from_file(
         tag=tag,
         app=app,
         validate_schema=validate_schema,
+        execute_in_order=execute_in_order,
     )
 
 
 def from_dict(
-    raw_schema: Dict[str, Any],
+    raw_schema:Union[OrderedDict,Dict[str, Any]] ,
     location: Optional[str] = None,
     base_url: Optional[str] = None,
     method: Optional[Filter] = None,
@@ -113,6 +118,7 @@ def from_dict(
     *,
     app: Any = None,
     validate_schema: bool = True,
+    execute_in_order: Optional[dict] = None,
 ) -> BaseSchema:
     """Get a proper abstraction for the given raw schema."""
     if "swagger" in raw_schema:
@@ -126,10 +132,11 @@ def from_dict(
             tag=tag,
             app=app,
             validate_schema=validate_schema,
+            execute_in_order=execute_in_order,
         )
 
     if "openapi" in raw_schema:
-        _maybe_validate_schema(raw_schema, spec_schemas.OPENAPI_30, validate_schema)
+        _maybe_validate_schema(raw_schema, spec_schemas.OPENAPI_30, validate_schema)    
         return OpenApi30(
             raw_schema,
             location=location,
@@ -139,11 +146,12 @@ def from_dict(
             tag=tag,
             app=app,
             validate_schema=validate_schema,
+            execute_in_order=execute_in_order,
         )
     raise ValueError("Unsupported schema type")
 
 
-def _maybe_validate_schema(instance: Dict[str, Any], schema: Dict[str, Any], validate_schema: bool) -> None:
+def _maybe_validate_schema(instance: Union[Dict[str, Any],OrderedDict], schema: Dict[str, Any], validate_schema: bool) -> None:
     if validate_schema:
         try:
             jsonschema.validate(instance, schema)

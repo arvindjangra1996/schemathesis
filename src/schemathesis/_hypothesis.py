@@ -17,7 +17,8 @@ from .hooks import get_hook
 from .models import Case, Endpoint
 from .types import Hook
 
-PARAMETERS = frozenset(("path_parameters", "headers", "cookies", "query", "body", "form_data"))
+#PARAMETERS = frozenset(("path_parameters", "headers", "cookies", "query", "body", "form_data"))
+PARAMETERS = frozenset(("path_parameters", "cookies", "query", "body", "form_data"))
 SLASH = "/"
 
 
@@ -39,7 +40,7 @@ def create_test(
 
 
 def make_test_or_exception(
-    endpoint: Endpoint, func: Callable, settings: Optional[hypothesis.settings] = None, seed: Optional[int] = None
+    endpoint: Endpoint, func: Callable, settings: Optional[hypothesis.settings] = None, seed: Optional[int] = None, execute_in_order: Optional[dict] = None
 ) -> Union[Callable, InvalidSchema]:
     try:
         return create_test(endpoint, func, settings, seed=seed)

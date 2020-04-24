@@ -3,7 +3,7 @@ import time
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional, Union
 
-import attr
+import attr,json,copy
 import hypothesis
 import requests
 from _pytest.logging import LogCaptureHandler, catching_logs
@@ -38,6 +38,8 @@ class BaseRunner:
     request_timeout: Optional[int] = attr.ib(default=None)  # pragma: no mutate
     seed: Optional[int] = attr.ib(default=None)  # pragma: no mutate
     exit_first: bool = attr.ib(default=False)  # pragma: no mutate
+    execute_in_order: Optional[dict] = attr.ib(None)
+
 
     def execute(self) -> Generator[events.ExecutionEvent, None, None]:
         """Common logic for all runners."""
@@ -66,6 +68,8 @@ def run_test(
     test: Union[Callable, InvalidSchema],
     checks: Iterable[CheckFunction],
     results: TestResultSet,
+    execute_in_order: Optional[dict] = None,
+    store_response: Optional[object] = None,
     **kwargs: Any,
 ) -> Generator[events.ExecutionEvent, None, None]:
     """A single test run with all error handling needed."""
@@ -79,7 +83,10 @@ def run_test(
             result.add_error(test)
         else:
             with capture_hypothesis_output() as hypothesis_output:
-                test(checks, result, **kwargs)
+                kwargs['execute_in_order'] = execute_in_order
+                kwargs['store_response'] = store_response
+                test(checks, result,**kwargs)
+                  
             status = Status.success
     except (AssertionError, hypothesis.errors.MultipleFailures):
         status = Status.failure
@@ -127,9 +134,21 @@ def run_checks(case: Case, checks: Iterable[CheckFunction], result: TestResult, 
         except AssertionError as exc:
             errors.append(exc)
             result.add_failure(check_name, case, str(exc))
+    
+    result.add_status_code(response.status_code)
+    if response.status_code > 204:
+        try:
+            res = json.loads(response.text)
+        except Exception as er:
+            res = response.text    
+        result.add_response_error_result(res)
+    else:
+        result.add_response_error_result("Success")
+
 
     if errors:
         raise get_grouped_exception(*errors)
+    
 
 
 def network_test(
@@ -138,13 +157,71 @@ def network_test(
     result: TestResult,
     session: requests.Session,
     request_timeout: Optional[int],
+    execute_in_order: Optional[dict],
+    store_response: Optional[object]
 ) -> None:
     """A single test body that will be executed against the target."""
-    # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-arguments   
+    case,session = update_case_header(case,session)
+    case = check_if_change_required(case,execute_in_order,store_response)
     timeout = prepare_timeout(request_timeout)
     response = case.call(session=session, timeout=timeout)
+    check_if_storing_required(case,response,execute_in_order,store_response)
     run_checks(case, checks, result, response)
+      
+    
+def check_if_change_required(case: Case,execute_in_order,store_response):
+    path = case.endpoint.path.lower()
+    method = case.endpoint.method.lower()
+    if execute_in_order:
+        try:
+            if execute_in_order is not None and method+":"+path in execute_in_order:
+                if execute_in_order[method+":"+path].get('required',None):
+                    for typ,val in execute_in_order[method+":"+path]['required'].items():
+                        if typ == 'path_parameters':
+                            for path_param,depends in val.items():
+                                p = depends.split(":")
+                                case.path_parameters[path_param] = store_response.get_store_result(p[0]+":"+p[1],p[2])
 
+                        elif typ == 'query':
+                            for path_param,depends in val.items():
+                                p = depends.split(":")
+                                case.query[path_param] = store_response.get_store_result(p[0]+":"+p[1],p[2])
+
+                        elif typ == 'body':
+                            for path_param,depends in val.items():
+                                p = depends.split(":")
+                                case.body[path_param] = store_response.get_store_result(p[0]+":"+p[1],p[2])
+        except Exception as er:
+            pass
+    elif '/notes' in path and case.path_parameters and 'note_id' in case.path_parameters:
+        case.path_parameters['note_id'] = store_response.get_store_result('post:/notes','id')     
+    return case
+
+def check_if_storing_required(case,response,execute_in_order,store_response):
+    path = case.endpoint.path.lower()
+    method = case.endpoint.method.lower()
+    if execute_in_order :
+        try:
+            if execute_in_order is not None and method+":"+path in execute_in_order:
+                if execute_in_order[method+":"+path].get('store',None) and response.status_code <= 204 :
+                    for to_store in execute_in_order[method+":"+path]['store']:
+                        store_response.store_result(method+":"+path,to_store,json.loads(response.text).get(to_store,None))
+        except Exception as er:
+            pass
+    elif path == '/notes' and method == 'post':
+        store_response.store_result(method+":"+path,'id',json.loads(response.text).get('id',None))
+
+def update_case_header(case,session):
+    #session = copy.deepcopy(session)
+    if case.headers:
+        for h in case.headers:
+            if h in session.headers:
+                case.headers[h] = session.headers.get(h,None)
+                
+    #else:
+    #    session.headers.pop('x-user-key',None)   
+    return case,session        
 
 @contextmanager
 def get_session(

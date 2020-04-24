@@ -269,6 +269,8 @@ class TestResult:
     logs: List[LogRecord] = attr.ib(factory=list)  # pragma: no mutate
     is_errored: bool = attr.ib(default=False)  # pragma: no mutate
     seed: Optional[int] = attr.ib(default=None)  # pragma: no mutate
+    response_status_code: int = attr.ib(default=600)
+    response_error_result: Optional[Union[str,dict]] = attr.ib(default="Not Executed")
 
     def mark_errored(self) -> None:
         self.is_errored = True
@@ -293,6 +295,13 @@ class TestResult:
 
     def add_error(self, exception: Exception, example: Optional[Case] = None) -> None:
         self.errors.append((exception, example))
+
+    def add_status_code(self,code:int) -> None:
+        self.response_status_code = code
+    
+    def add_response_error_result(self,error:Union[str,dict]) -> None:
+        self.response_error_result = error
+
 
 
 @attr.s(slots=True, repr=False)  # pragma: no mutate

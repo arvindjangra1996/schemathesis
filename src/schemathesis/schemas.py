@@ -20,6 +20,7 @@ import hypothesis
 import jsonschema
 import yaml
 from requests.structures import CaseInsensitiveDict
+from collections import OrderedDict
 
 from ._hypothesis import make_test_or_exception
 from .constants import HookLocation
@@ -34,7 +35,6 @@ from .utils import NOT_SET, GenericResponse, StringDatesYAMLLoader
 RECURSION_DEPTH_LIMIT = 100
 # Generic test with any arguments and no return
 GenericTest = Callable[..., None]  # pragma: no mutate
-
 
 def load_file_impl(location: str, opener: Callable) -> Dict[str, Any]:
     """Load a schema from the given file."""
@@ -56,7 +56,7 @@ def load_file_uri(location: str) -> Dict[str, Any]:
 
 @attr.s()  # pragma: no mutate
 class BaseSchema(Mapping):
-    raw_schema: Dict[str, Any] = attr.ib()  # pragma: no mutate
+    raw_schema: Union[OrderedDict,Dict[str, Any]] = attr.ib()  # pragma: no mutate
     location: Optional[str] = attr.ib(default=None)  # pragma: no mutate
     base_url: Optional[str] = attr.ib(default=None)  # pragma: no mutate
     method: Optional[Filter] = attr.ib(default=None)  # pragma: no mutate
@@ -65,6 +65,7 @@ class BaseSchema(Mapping):
     app: Any = attr.ib(default=None)  # pragma: no mutate
     hooks: Dict[HookLocation, Hook] = attr.ib(factory=dict)  # pragma: no mutate
     validate_schema: bool = attr.ib(default=True)  # pragma: no mutate
+    execute_in_order: Optional[dict] = attr.ib(default=None)
 
     def __iter__(self) -> Iterator[str]:
         return iter(self.endpoints)
@@ -87,7 +88,7 @@ class BaseSchema(Mapping):
     def endpoints(self) -> Dict[str, CaseInsensitiveDict]:
         if not hasattr(self, "_endpoints"):
             # pylint: disable=attribute-defined-outside-init
-            endpoints = self.get_all_endpoints()
+            endpoints = self.get_all_endpoints(self.execute_in_order)
             self._endpoints = endpoints_to_dict(endpoints)
         return self._endpoints
 
@@ -108,12 +109,12 @@ class BaseSchema(Mapping):
         raise NotImplementedError
 
     def get_all_tests(
-        self, func: Callable, settings: Optional[hypothesis.settings] = None, seed: Optional[int] = None
+        self, func: Callable, settings: Optional[hypothesis.settings] = None, seed: Optional[int] = None,execute_in_order: Optional[dict] = None
     ) -> Generator[Tuple[Endpoint, Union[Callable, InvalidSchema]], None, None]:
         """Generate all endpoints and Hypothesis tests for them."""
         test: Union[Callable, InvalidSchema]
-        for endpoint in self.get_all_endpoints():
-            test = make_test_or_exception(endpoint, func, settings, seed)
+        for endpoint in self.get_all_endpoints(execute_in_order=execute_in_order):
+            test = make_test_or_exception(endpoint, func, settings, seed, execute_in_order)
             yield endpoint, test
 
     def parametrize(
@@ -219,17 +220,19 @@ class SwaggerV20(BaseSchema):
         """Compute full path for the given path."""
         return urljoin(self.base_path, path.lstrip("/"))  # pragma: no mutate
 
-    def get_all_endpoints(self) -> Generator[Endpoint, None, None]:
+    def get_all_endpoints(self,execute_in_order: Optional[dict] = None) -> Generator[Endpoint, None, None]:
         try:
             paths = self.raw_schema["paths"]  # pylint: disable=unsubscriptable-object
             for path, methods in paths.items():
-                full_path = self.get_full_path(path)
-                if should_skip_endpoint(full_path, self.endpoint):
+                full_path = self.get_full_path(path) if self.base_url is None else path
+                if should_skip_endpoint(full_path, self.endpoint) :
                     continue
                 methods = self.resolve(methods)
                 common_parameters = get_common_parameters(methods)
                 for method, definition in methods.items():
-                    # Only method definitions are parsed
+                    if execute_in_order is not None and method+":"+path in execute_in_order:
+                        continue
+                    
                     if (
                         method not in self.operations
                         or should_skip_method(method, self.method)
@@ -238,6 +241,27 @@ class SwaggerV20(BaseSchema):
                         continue
                     parameters = itertools.chain(definition.get("parameters", ()), common_parameters)
                     yield self.make_endpoint(full_path, method, parameters, definition)
+                   
+            if execute_in_order is not None:        
+                for method_path in execute_in_order:
+                    method , path = method_path.split(":")
+                    methods = {}
+                    methods[method] = paths[path][method]
+                    full_path = self.get_full_path(path) if self.base_url is None else path
+                    if should_skip_endpoint(full_path, self.endpoint) :
+                        continue
+                    methods = self.resolve(methods)
+                    common_parameters = get_common_parameters(methods)
+                    for method, definition in methods.items():
+                        if (
+                            method not in self.operations
+                            or should_skip_method(method, self.method)
+                            or should_skip_by_tag(definition.get("tags"), self.tag)
+                        ):
+                            continue
+                        parameters = itertools.chain(definition.get("parameters", ()), common_parameters)
+                        yield self.make_endpoint(full_path, method, parameters, definition)
+                        
         except (KeyError, AttributeError, jsonschema.exceptions.RefResolutionError):
             raise InvalidSchema("Schema parsing failed. Please check your schema.")
 
@@ -392,8 +416,18 @@ class OpenApi30(SwaggerV20):  # pylint: disable=too-many-ancestors
         """Create JSON schemas for query, body, etc from Swagger parameters definitions."""
         endpoint = super().make_endpoint(full_path, method, parameters, definition)
         if "requestBody" in definition:
-            self.process_body(endpoint, definition["requestBody"])
+            if 'multipart/form-data' in definition["requestBody"]["content"]:
+                self.process_form_data_example(endpoint,definition["requestBody"]["content"]['multipart/form-data'])
+            else:    
+                self.process_body(endpoint, definition["requestBody"])
         return endpoint
+    
+    def process_form_data_example(self,endpoint,param: dict):
+        if param.get('schema',None) and param['schema'].get('example',None):
+            for k,v in param['schema']['example'].items():
+                if "b'" in v:
+                    param['schema']['example'][k] = bytes(v.strip("b'"),encoding='utf8')
+            endpoint.form_data = {'example':param['schema']['example']}
 
     def process_by_type(self, endpoint: Endpoint, parameter: Dict[str, Any]) -> None:
         if parameter["in"] == "cookie":
@@ -422,6 +456,7 @@ class OpenApi30(SwaggerV20):  # pylint: disable=too-many-ancestors
         # > the example value SHALL override the example provided by the schema
         if "example" in parameter:
             parameter["schema"]["example"] = parameter["example"]
+
         super().process_body(endpoint, parameter)
 
     def parameter_to_json_schema(self, data: Dict[str, Any]) -> Dict[str, Any]:

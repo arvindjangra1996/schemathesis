@@ -7,7 +7,7 @@ from ...models import TestResultSet
 from ...utils import get_requests_auth
 from .. import events
 from .core import BaseRunner, get_session, network_test, run_test, wsgi_test
-
+from ...store_result import Store_response
 
 @attr.s(slots=True)  # pragma: no mutate
 class SingleThreadRunner(BaseRunner):
@@ -15,10 +15,11 @@ class SingleThreadRunner(BaseRunner):
 
     def _execute(self, results: TestResultSet) -> Generator[events.ExecutionEvent, None, None]:
         auth = get_requests_auth(self.auth, self.auth_type)
+        store_response = Store_response()
         with get_session(auth, self.headers) as session:
-            for endpoint, test in self.schema.get_all_tests(network_test, self.hypothesis_settings, self.seed):
+            for endpoint, test in self.schema.get_all_tests(network_test, self.hypothesis_settings, self.seed,self.execute_in_order):
                 for event in run_test(
-                    endpoint, test, self.checks, results, session=session, request_timeout=self.request_timeout,
+                    endpoint, test, self.checks, results, session=session, request_timeout=self.request_timeout,execute_in_order=self.execute_in_order,store_response=store_response
                 ):
                     yield event
                     if isinstance(event, events.Interrupted):
@@ -28,9 +29,10 @@ class SingleThreadRunner(BaseRunner):
 @attr.s(slots=True)  # pragma: no mutate
 class SingleThreadWSGIRunner(SingleThreadRunner):
     def _execute(self, results: TestResultSet) -> Generator[events.ExecutionEvent, None, None]:
-        for endpoint, test in self.schema.get_all_tests(wsgi_test, self.hypothesis_settings, self.seed):
+        store_response = Store_response()
+        for endpoint, test in self.schema.get_all_tests(wsgi_test, self.hypothesis_settings, self.seed, self.execute_in_order):
             for event in run_test(
-                endpoint, test, self.checks, results, auth=self.auth, auth_type=self.auth_type, headers=self.headers,
+                endpoint, test, self.checks, results, auth=self.auth, auth_type=self.auth_type, headers=self.headers,execute_in_order=self.execute_in_order,store_response=store_response,
             ):
                 yield event
                 if isinstance(event, events.Interrupted):
