@@ -270,7 +270,8 @@ class TestResult:
     is_errored: bool = attr.ib(default=False)  # pragma: no mutate
     seed: Optional[int] = attr.ib(default=None)  # pragma: no mutate
     response_status_code: int = attr.ib(default=600)
-    response_error_result: Optional[Union[str,dict]] = attr.ib(default="Not Executed")
+    response_error_result: Optional[Union[str, dict]] = attr.ib(default="Not Executed")
+    response_time_in_sec: Optional[str] = attr.ib(default='0 sec')
 
     def mark_errored(self) -> None:
         self.is_errored = True
@@ -296,12 +297,14 @@ class TestResult:
     def add_error(self, exception: Exception, example: Optional[Case] = None) -> None:
         self.errors.append((exception, example))
 
-    def add_status_code(self,code:int) -> None:
+    def add_status_code(self, code: int) -> None:
         self.response_status_code = code
     
-    def add_response_error_result(self,error:Union[str,dict]) -> None:
+    def add_response_error_result(self, error: Union[str, dict]) -> None:
         self.response_error_result = error
-
+    
+    def add_response_elapsed_time(self, _time: str) -> None:
+        self.response_time_in_sec = _time
 
 
 @attr.s(slots=True, repr=False)  # pragma: no mutate

@@ -82,6 +82,7 @@ class SerializedTestResult:
     errors: List[SerializedError] = attr.ib()  # pragma: no mutate
     response_status_code: int = attr.ib(default=600)
     response_error_result: Optional[str] = attr.ib(default=None)
+    response_time_in_sec: Optional[str] = attr.ib(default='0 sec')
 
     @classmethod
     def from_test_result(cls, result: TestResult) -> "SerializedTestResult":
@@ -98,5 +99,6 @@ class SerializedTestResult:
             logs=[formatter.format(record) for record in result.logs],
             errors=[SerializedError.from_error(*error) for error in result.errors],
             response_status_code=result.response_status_code,
-            response_error_result=result.response_error_result
+            response_error_result=result.response_error_result,
+            response_time_in_sec=result.response_time_in_sec,
         )

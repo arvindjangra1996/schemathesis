@@ -140,11 +140,12 @@ def run_checks(case: Case, checks: Iterable[CheckFunction], result: TestResult, 
         try:
             res = json.loads(response.text)
         except Exception as er:
-            res = response.text    
+            res = response.text  
         result.add_response_error_result(res)
     else:
         result.add_response_error_result("Success")
-
+    
+    result.add_response_elapsed_time(str(response.elapsed.total_seconds()) + ' sec')
 
     if errors:
         raise get_grouped_exception(*errors)
