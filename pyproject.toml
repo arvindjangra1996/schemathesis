@@ -1,8 +1,8 @@
 [tool.poetry]
-name = "sentieo-schemathesis"
-version = "0.0.1"
+name = "enhancedSchemathesis"
+version = "0.0.2"
 description = "Hypothesis strategies for Open API / Swagger schemas"
-keywords = ["pytest", "hypothesis", "openapi", "swagger", "testing"]
+keywords = [ "testing"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",

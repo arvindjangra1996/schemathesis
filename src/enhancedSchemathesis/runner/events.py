@@ -49,10 +49,11 @@ class BeforeExecution(ExecutionEvent):
 
     method: str = attr.ib()  # pragma: no mutate
     path: str = attr.ib()  # pragma: no mutate
+    endpoint: Endpoint = attr.ib()
 
     @classmethod
     def from_endpoint(cls, endpoint: Endpoint) -> "BeforeExecution":
-        return cls(method=endpoint.method, path=endpoint.path)
+        return cls(method=endpoint.method, path=endpoint.path, endpoint=Endpoint)
 
 
 @attr.s(slots=True)  # pragma: no mutate
