@@ -166,6 +166,7 @@ def network_test(
     case,session = update_case_header(case,session)
     case = check_if_change_required(case,execute_in_order,store_response)
     timeout = prepare_timeout(request_timeout)
+    
     response = case.call(session=session, timeout=timeout)
     check_if_storing_required(case,response,execute_in_order,store_response)
     run_checks(case, checks, result, response)
@@ -196,7 +197,9 @@ def check_if_change_required(case: Case,execute_in_order,store_response):
         except Exception as er:
             pass
     elif '/notes' in path and case.path_parameters and 'note_id' in case.path_parameters:
-        case.path_parameters['note_id'] = store_response.get_store_result('post:/notes','id')     
+        case.path_parameters['note_id'] = store_response.get_store_result('post:/notes','id')
+    elif path == '/notes' and method == 'post':    
+        case.body["ref"] = str(time.time()) + 'platform_testing'      
     return case
 
 def check_if_storing_required(case,response,execute_in_order,store_response):

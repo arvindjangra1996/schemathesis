@@ -53,7 +53,7 @@ class BeforeExecution(ExecutionEvent):
 
     @classmethod
     def from_endpoint(cls, endpoint: Endpoint) -> "BeforeExecution":
-        return cls(method=endpoint.method, path=endpoint.path, endpoint=Endpoint)
+        return cls(method=endpoint.method, path=endpoint.path, endpoint=endpoint)
 
 
 @attr.s(slots=True)  # pragma: no mutate
